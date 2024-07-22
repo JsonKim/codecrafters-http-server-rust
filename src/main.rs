@@ -1,13 +1,26 @@
 // Uncomment this block to pass the first stage
 use std::{
-    io::Error,
-    io::Write,
+    io::{Error, Read, Write},
     net::{TcpListener, TcpStream},
 };
 
-fn handle_client(mut stream: TcpStream, message: &str) -> Result<(), Error> {
-    stream.write(message.as_bytes())?;
-    stream.flush()?;
+fn handle_client(mut stream: TcpStream, data: &str) -> Result<(), Error> {
+    let mut buffer = [0; 1024];
+    let bytes_read = stream.read(&mut buffer)?;
+    let message = String::from_utf8_lossy(&buffer[..bytes_read]);
+    let lines: Vec<&str> = message.split("\r\n").collect();
+    if let Some(first_line) = lines.first() {
+        let parts: Vec<&str> = first_line.split_whitespace().collect();
+
+        if parts[1] == "/" {
+            stream.write(data.as_bytes())?;
+            stream.flush()?;
+        } else {
+            stream.write("HTTP/1.1 404 Not Found\r\n\r\n".as_bytes())?;
+            stream.flush()?;
+        }
+    }
+
     Ok(())
 }
 
