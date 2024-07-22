@@ -4,23 +4,30 @@ use std::{
     net::{TcpListener, TcpStream},
 };
 
-fn handle_client(mut stream: TcpStream, data: &str) -> Result<(), Error> {
-    let mut buffer = [0; 1024];
-    let bytes_read = stream.read(&mut buffer)?;
-    let message = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let lines: Vec<&str> = message.split("\r\n").collect();
-    if let Some(first_line) = lines.first() {
-        let parts: Vec<&str> = first_line.split_whitespace().collect();
+enum RouteContent<'a> {
+    Index,
+    Echo(&'a str),
+    NotFound,
+}
 
-        if parts[1] == "/" {
-            stream.write(data.as_bytes())?;
-            stream.flush()?;
-        } else {
-            stream.write("HTTP/1.1 404 Not Found\r\n\r\n".as_bytes())?;
-            stream.flush()?;
-        }
+fn parse_route(input: &str) -> RouteContent {
+    if input == "/" {
+        RouteContent::Index
+    } else if let Some(content) = input.strip_prefix("/echo/") {
+        RouteContent::Echo(content)
+    } else {
+        RouteContent::NotFound
     }
+}
 
+fn get_path(request: &str) -> &str {
+    let first_line = request.lines().next().unwrap();
+    first_line.split_whitespace().nth(1).unwrap()
+}
+
+fn handle_client(mut stream: TcpStream, data: &str) -> Result<(), Error> {
+    stream.write(data.as_bytes())?;
+    stream.flush()?;
     Ok(())
 }
 
@@ -34,9 +41,22 @@ fn main() {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(_stream) => {
+            Ok(mut stream) => {
                 println!("accepted new connection");
-                if let Err(e) = handle_client(_stream, "HTTP/1.1 200 OK\r\n\r\n") {
+
+                let mut buffer = [0; 1024];
+                let bytes_read = stream.read(&mut buffer).unwrap();
+                let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+                let path = get_path(&request);
+
+                let message = match parse_route(path) {
+                    RouteContent::Index => "HTTP/1.1 200 OK\r\n\r\n".to_string(),
+                    RouteContent::Echo(content) => 
+                        format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}", content.len(), content),
+                    RouteContent::NotFound => "HTTP/1.1 404 Not Found\r\n\r\n".to_string(),
+                };
+
+                if let Err(e) = handle_client(stream, message.as_str()) {
                     eprintln!("Error handling client: {}", e);
                 }
             }
