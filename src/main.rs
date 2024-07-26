@@ -3,6 +3,11 @@ use std::{
     collections::HashMap, env, io::{Error, Read, Write}, net::{TcpListener, TcpStream}, path::Path
 };
 
+enum HttpMethod {
+    GET,
+    POST,
+}
+
 enum RouteContent<'a> {
     Index,
     Echo(&'a str),
@@ -11,22 +16,23 @@ enum RouteContent<'a> {
     NotFound,
 }
 
-fn parse_route<'a>(input: &'a str) -> RouteContent {
-    if input == "/" {
-        RouteContent::Index
-    } else if input == "/user-agent" {
-        RouteContent::UserAgent
-    } else if let Some(content) = input.strip_prefix("/echo/") {
-        RouteContent::Echo(content)
-    } else if let Some(content) = input.strip_prefix("/files/") {
-        RouteContent::File(content)
-    } else {
-        RouteContent::NotFound
+fn parse_route<'a>(method: HttpMethod, input: &'a str) -> RouteContent {
+    match (method, input) {
+        (HttpMethod::GET, "/") => RouteContent::Index,
+        (HttpMethod::GET, "/user-agent") => RouteContent::UserAgent,
+        (HttpMethod::GET, _) if input.starts_with("/echo/") => RouteContent::Echo(&input[6..]),
+        (HttpMethod::GET, _) if input.starts_with("/files/") => RouteContent::File(&input[7..]),
+        (HttpMethod::POST, _) if input.starts_with("/files/") => RouteContent::File(&input[7..]),
+        _ => RouteContent::NotFound,
     }
 }
 
 fn parse_text_to_map(text: &str) -> HashMap<String, String> {
-    text.lines()
+    text
+        .split("\r\n\r\n")
+        .next()
+        .unwrap_or("")
+        .lines()
         .skip(1)
         .filter_map(|line| {
             let parts: Vec<&str> = line.splitn(2, ": ").collect();
@@ -39,9 +45,25 @@ fn parse_text_to_map(text: &str) -> HashMap<String, String> {
         .collect()
 }
 
+fn parse_body(text: &str) -> &str {
+    text.split("\r\n\r\n")
+        .nth(1)
+        .unwrap_or("")
+}
+
 fn get_path(request: &str) -> &str {
     let first_line = request.lines().next().unwrap();
     first_line.split_whitespace().nth(1).unwrap()
+}
+
+fn get_method(request: &str) -> Option<HttpMethod> {
+    let first_line = request.lines().next().unwrap();
+    let method = first_line.split_whitespace().nth(0)?;
+    match method {
+        "GET" => Some(HttpMethod::GET),
+        "POST" => Some(HttpMethod::POST),
+        _ => None,
+    }
 }
 
 fn handle_client(mut stream: TcpStream, data: &str) -> Result<(), Error> {
@@ -69,10 +91,11 @@ fn main() {
                     let mut buffer = [0; 1024];
                     let bytes_read = stream.read(&mut buffer).unwrap();
                     let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+                    let method = get_method(&request);
                     let path = get_path(&request);
                     let headers = parse_text_to_map(&request);
     
-                    let message = match parse_route(path) {
+                    let message = method.map(|method| match parse_route(method, path) {
                         RouteContent::Index => "HTTP/1.1 200 OK\r\n\r\n".to_string(),
                         RouteContent::Echo(content) => 
                             format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}", content.len(), content),
@@ -88,7 +111,8 @@ fn main() {
                             Some(user_agent) => format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}", user_agent.len(), user_agent),
                             None => "HTTP/1.1 404 Not Found\r\n\r\n".to_string(),
                         }
-                    };
+                    })
+                    .unwrap_or("HTTP/1.1 404 Not Found\r\n\r\n".to_string());
     
                     if let Err(e) = handle_client(stream, message.as_str()) {
                         eprintln!("Error handling client: {}", e);
