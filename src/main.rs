@@ -58,28 +58,30 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                println!("accepted new connection");
+                std::thread::spawn(move || {
+                    println!("accepted new connection");
 
-                let mut buffer = [0; 1024];
-                let bytes_read = stream.read(&mut buffer).unwrap();
-                let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-                let path = get_path(&request);
-                let headers = parse_text_to_map(&request);
+                    let mut buffer = [0; 1024];
+                    let bytes_read = stream.read(&mut buffer).unwrap();
+                    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+                    let path = get_path(&request);
+                    let headers = parse_text_to_map(&request);
 
-                let message = match parse_route(path) {
-                    RouteContent::Index => "HTTP/1.1 200 OK\r\n\r\n".to_string(),
-                    RouteContent::Echo(content) => 
-                        format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}", content.len(), content),
-                    RouteContent::NotFound => "HTTP/1.1 404 Not Found\r\n\r\n".to_string(),
-                    RouteContent::UserAgent => match headers.get("User-Agent") {
-                        Some(user_agent) => format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}", user_agent.len(), user_agent),
-                        None => "HTTP/1.1 404 Not Found\r\n\r\n".to_string(),
+                    let message = match parse_route(path) {
+                        RouteContent::Index => "HTTP/1.1 200 OK\r\n\r\n".to_string(),
+                        RouteContent::Echo(content) => 
+                            format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}", content.len(), content),
+                        RouteContent::NotFound => "HTTP/1.1 404 Not Found\r\n\r\n".to_string(),
+                        RouteContent::UserAgent => match headers.get("User-Agent") {
+                            Some(user_agent) => format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}", user_agent.len(), user_agent),
+                            None => "HTTP/1.1 404 Not Found\r\n\r\n".to_string(),
+                        }
+                    };
+
+                    if let Err(e) = handle_client(stream, message.as_str()) {
+                        eprintln!("Error handling client: {}", e);
                     }
-                };
-
-                if let Err(e) = handle_client(stream, message.as_str()) {
-                    eprintln!("Error handling client: {}", e);
-                }
+                });
             }
             Err(e) => {
                 println!("error: {}", e);
