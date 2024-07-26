@@ -1,6 +1,6 @@
 // Uncomment this block to pass the first stage
 use std::{
-    collections::HashMap, env, io::{Error, Read, Write}, net::{TcpListener, TcpStream}, path::Path
+    collections::HashMap, env, fs::File, io::{Error, Read, Write}, net::{TcpListener, TcpStream}, path::Path
 };
 
 enum HttpMethod {
@@ -11,7 +11,8 @@ enum HttpMethod {
 enum RouteContent<'a> {
     Index,
     Echo(&'a str),
-    File(&'a str),
+    GetFile(&'a str),
+    PostFile(&'a str),
     UserAgent,
     NotFound,
 }
@@ -21,8 +22,8 @@ fn parse_route<'a>(method: HttpMethod, input: &'a str) -> RouteContent {
         (HttpMethod::GET, "/") => RouteContent::Index,
         (HttpMethod::GET, "/user-agent") => RouteContent::UserAgent,
         (HttpMethod::GET, _) if input.starts_with("/echo/") => RouteContent::Echo(&input[6..]),
-        (HttpMethod::GET, _) if input.starts_with("/files/") => RouteContent::File(&input[7..]),
-        (HttpMethod::POST, _) if input.starts_with("/files/") => RouteContent::File(&input[7..]),
+        (HttpMethod::GET, _) if input.starts_with("/files/") => RouteContent::GetFile(&input[7..]),
+        (HttpMethod::POST, _) if input.starts_with("/files/") => RouteContent::PostFile(&input[7..]),
         _ => RouteContent::NotFound,
     }
 }
@@ -99,12 +100,23 @@ fn main() {
                         RouteContent::Index => "HTTP/1.1 200 OK\r\n\r\n".to_string(),
                         RouteContent::Echo(content) => 
                             format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}", content.len(), content),
-                        RouteContent::File(file) => {
+                        RouteContent::GetFile(file) => {
                             let file_path = Path::new(&directory).join(file); // Use the cloned directory variable
                             match std::fs::read_to_string(file_path) {
                                 Ok(content) => format!("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n{}", content.len(), content),
                                 Err(_) => "HTTP/1.1 404 Not Found\r\n\r\n".to_string(),
                             }
+                        },
+                        RouteContent::PostFile(file) => {
+                            let body = parse_body(&request);
+                            let file_path = Path::new(&directory).join(file); // Use the cloned directory variable
+
+                            File::create(file_path)
+                                .unwrap()
+                                .write_all(body.as_bytes())
+                                .unwrap();
+
+                            "HTTP/1.1 201 Created\r\n\r\n".to_string()
                         },
                         RouteContent::NotFound => "HTTP/1.1 404 Not Found\r\n\r\n".to_string(),
                         RouteContent::UserAgent => match headers.get("User-Agent") {
